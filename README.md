@@ -28,8 +28,9 @@
    - [Open SSH tunnel](#74-open-ssh-tunnel-to-tts-server)
    - [Run the voice agent](#75-run-the-voice-agent)
 8. [Benchmark results](#8-benchmark-results)
-9. [Limitations](#9-simplifications--known-limitations)
-10. [Environment variables](#10-environment-variables-reference)
+9. [Potential performance improvements](#9-potential-performance-improvements)
+10. [Limitations](#10-simplifications--known-limitations)
+11. [Environment variables](#11-environment-variables-reference)
 
 ---
 
@@ -384,7 +385,71 @@ Per-frame wall time: ~5 ms (code pred) + ~0.9 ms (megakernel) + ~3 ms (vocoder) 
 
 ---
 
-## 9. Simplifications / known limitations
+## 9. Potential performance improvements
+
+All four improvements below are grounded in the actual bottleneck profile of the current system and are realistic to implement on the existing stack.
+
+### 1. CUDA stream pipelining (~30% throughput gain, low effort)
+
+The three decode stages — megakernel step, code predictor, vocoder — currently run serially but use different hardware units (tensor cores vs CUDA cores vs memory bandwidth). Assigning them to separate CUDA streams lets them overlap:
+
+```python
+with torch.cuda.stream(stream_decode):
+    logits_next = megakernel.step(...)       # frame N+1 decode
+with torch.cuda.stream(stream_vocoder):
+    pcm = vocoder.decode(codec_ids_prev)    # frame N vocoder — runs concurrently
+```
+
+The vocoder (3 ms/frame batched) and megakernel (0.86 ms/step) overlap for free — no algorithmic changes needed.
+
+### 2. FP8 weights on Blackwell (~1.8× matrix multiply throughput, medium effort)
+
+The RTX 5090 (sm_120) has FP8 tensor cores. The megakernel's dominant cost is the GEMM operations across 28 attention layers. Quantising weight matrices to FP8 with per-row scaling and recompiling:
+
+```bash
+nvcc -DUSE_FP8=1 -arch=sm_120 -DLDG_VOCAB_SIZE=3072 ...
+```
+
+Expected: 0.86 ms/step → ~0.48 ms/step. TTFC drops ~4 ms, RTF improves ~40%.
+
+### 3. Vocoder pre-warm (drops TTFC by ~11 ms, trivial effort)
+
+The vocoder's first call costs ~11 ms — the largest single TTFC component — because its CUDA graph isn't fully warmed. Running a dummy synthesis call at server startup eliminates this:
+
+```python
+# In tts_server.py startup
+_ = vocoder.decode([zero_codec_frame])   # pre-warm
+```
+
+This alone would bring TTFC from ~36 ms to ~25 ms with one line of code.
+
+### 4. Speculative decoding (2–3× decode speedup, high effort)
+
+The codec token distribution in TTS is far more predictable than LLM text — neighbouring frames are highly correlated and prosody is smooth. A small 2–3 layer draft transformer can predict the next K codec tokens speculatively; the full megakernel verifies all K in one pass:
+
+```
+Draft (2-layer, ~0.1 ms) → predicts [t, t+1, t+2, t+3]
+Megakernel verifies all 4 in parallel (~0.86 ms, not 4 × 0.86 ms)
+Typical acceptance rate on TTS: ~75–85%
+Net: ~3 tokens per megakernel call instead of 1
+```
+
+This would bring decode throughput to an effective ~0.3 ms/step and RTF below 0.06 on the same hardware.
+
+### Summary
+
+| Improvement | Effort | TTFC impact | RTF impact |
+|---|---|---|---|
+| Vocoder pre-warm | Trivial | −11 ms | none |
+| CUDA stream pipelining | Low | −3 ms | ~15% better |
+| FP8 weights (Blackwell) | Medium | −4 ms | ~40% better |
+| Speculative decoding | High | −8 ms | ~60% better |
+
+Combined realistic target on RTX 5090: **TTFC ~14 ms · RTF ~0.05**
+
+---
+
+## 10. Simplifications / known limitations
 
 1. **No voice cloning**: Uses the default speaker. ICL voice conditioning not implemented.
 2. **Non-streaming text guidance**: `trailing_text_hidden` is always `tts_pad_embed`. Token-level guidance not implemented.
@@ -394,7 +459,7 @@ Per-frame wall time: ~5 ms (code pred) + ~0.9 ms (megakernel) + ~3 ms (vocoder) 
 
 ---
 
-## 10. Environment variables reference
+## 11. Environment variables reference
 
 | Variable | File | Default | Description |
 |---|---|---|---|
