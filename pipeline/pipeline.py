@@ -14,7 +14,6 @@ Prerequisites (Mac):
 """
 import asyncio, os, time
 import aiohttp
-import numpy as np
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import LLMRunFrame, TTSAudioRawFrame
@@ -86,18 +85,16 @@ class MegakernelTTSService(TTSService):
                 buf += chunk
                 while len(buf) >= FRAME_BYTES:
                     raw, buf = buf[:FRAME_BYTES], buf[FRAME_BYTES:]
-                    pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
                     yield TTSAudioRawFrame(
-                        audio=pcm.tobytes(),
+                        audio=raw,
                         sample_rate=SAMPLE_RATE,
                         num_channels=1,
                         context_id=context_id,
                     )
             if len(buf) >= 2:
                 raw = buf[: len(buf) - len(buf) % 2]
-                pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
                 yield TTSAudioRawFrame(
-                    audio=pcm.tobytes(),
+                    audio=raw,
                     sample_rate=SAMPLE_RATE,
                     num_channels=1,
                     context_id=context_id,
