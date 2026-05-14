@@ -16,7 +16,14 @@ import asyncio, os, time
 import aiohttp
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import LLMRunFrame, TTSAudioRawFrame
+from pipecat.frames.frames import (
+    AudioRawFrame,
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
+    Frame,
+    LLMRunFrame,
+    TTSAudioRawFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -27,6 +34,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.groq.llm import GroqLLMService
+from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.services.tts_service import TTSService
 from pipecat.services.settings import TTSSettings
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
@@ -40,6 +48,51 @@ SYSTEM_PROMPT = (
     "Keep responses short — under 3 sentences. "
     "Do not use bullet points or markdown formatting."
 )
+
+
+class AudioInputGate(FrameProcessor):
+    """
+    Mutes microphone audio while the bot is speaking.
+    Prevents the mic from picking up speaker output (echo / feedback loop)
+    which would cause the bot to hear and repeat its own speech.
+    A short post-speech delay allows residual speaker audio to dissipate.
+    """
+
+    def __init__(self, post_speech_mute_secs: float = 0.4):
+        super().__init__()
+        self._muted = False
+        self._post_speech_mute_secs = post_speech_mute_secs
+        self._unmute_handle: asyncio.TimerHandle | None = None
+
+    async def process_frame(self, frame: Frame, direction):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, BotStartedSpeakingFrame):
+            # Cancel any pending unmute and mute immediately
+            if self._unmute_handle:
+                self._unmute_handle.cancel()
+                self._unmute_handle = None
+            self._muted = True
+            await self.push_frame(frame, direction)
+
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            # Keep muted briefly after bot finishes so lingering speaker
+            # audio doesn't leak into the mic stream
+            loop = asyncio.get_event_loop()
+            self._unmute_handle = loop.call_later(
+                self._post_speech_mute_secs, self._unmute
+            )
+            await self.push_frame(frame, direction)
+
+        elif isinstance(frame, AudioRawFrame) and self._muted:
+            pass  # drop mic audio while bot is speaking / cooling down
+
+        else:
+            await self.push_frame(frame, direction)
+
+    def _unmute(self):
+        self._muted = False
+        self._unmute_handle = None
 
 
 class MegakernelTTSService(TTSService):
@@ -128,6 +181,7 @@ async def main():
     )
 
     tts = MegakernelTTSService(server_url=TTS_SERVER)
+    gate = AudioInputGate(post_speech_mute_secs=0.4)
 
     # Context + aggregators — VAD is wired into the user aggregator
     context = LLMContext()
@@ -138,6 +192,7 @@ async def main():
 
     pipeline = Pipeline([
         transport.input(),
+        gate,         # <-- mute mic while bot speaks; prevents echo feedback
         stt,
         pair.user(),
         llm,
