@@ -1,0 +1,25 @@
+# Model weights (large binary files – use Git LFS or download via setup.sh)
+model/
+
+# Compiled megakernel
+~/.cache/torch_extensions/
+__pycache__/
+*.pyc
+*.pyo
+
+# Python venv
+venv/
+.venv/
+env/
+
+# Editor
+.DS_Store
+.vscode/
+*.swp
+
+# Assessment PDFs / personal docs (not needed in source repo)
+*.pdf
+e3-assessment.txt
+Technical assessment mail.txt
+takehome_project.docx
+takehome_project.txt
