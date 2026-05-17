@@ -15,19 +15,23 @@ echo "=== Step 2: Patch kernel.cu (LDG_VOCAB_SIZE #ifndef guard) ==="
 python3 scripts/patch_kernel.py
 
 echo ""
-echo "=== Step 3: Download Qwen3-TTS model ==="
+echo "=== Step 3: Install Python dependencies ==="
+pip install -q huggingface_hub hf_transfer qwen-tts
+pip install -r requirements.txt
+
+echo ""
+echo "=== Step 4: Download Qwen3-TTS model ==="
 if [ ! -d "model/tts_base" ]; then
-    pip install -q huggingface_hub
-    huggingface-cli download Qwen/Qwen3-TTS-12Hz-0.6B-Base \
-        --local-dir model/tts_base \
-        --local-dir-use-symlinks False
+    HF_HUB_ENABLE_HF_TRANSFER=1 python3 - <<'EOF'
+from huggingface_hub import snapshot_download
+snapshot_download(
+    "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    local_dir="model/tts_base",
+)
+EOF
 else
     echo "model/tts_base/ already present – skipping download"
 fi
-
-echo ""
-echo "=== Step 4: Install Python dependencies ==="
-pip install -r requirements.txt
 
 echo ""
 echo "=== Step 5: Compile TTS CUDA megakernel ==="

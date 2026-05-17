@@ -4,6 +4,11 @@ transformers>=4.47.0
 safetensors>=0.4.0
 numpy>=1.24.0
 
+# Qwen3-TTS model + HuggingFace download
+qwen-tts>=0.1.1
+huggingface_hub>=0.23.0
+hf_transfer>=0.1.6    # optional fast downloader
+
 # TTS server
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0

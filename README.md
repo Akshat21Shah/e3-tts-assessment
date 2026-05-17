@@ -236,16 +236,11 @@ bash scripts/setup.sh
 `setup.sh` does:
 1. Clones [AlpinDale/qwen_megakernel](https://github.com/AlpinDale/qwen_megakernel)
 2. Patches `kernel.cu` with `#ifndef LDG_VOCAB_SIZE` guard
-3. Downloads `Qwen/Qwen3-TTS-12Hz-0.6B-Base` weights from HuggingFace (~1.4 GB)
-4. `pip install -r requirements.txt`
+3. `pip install -r requirements.txt` (includes `qwen-tts`, `huggingface_hub`, `hf_transfer`, `fastapi`, etc.)
+4. Downloads `Qwen/Qwen3-TTS-12Hz-0.6B-Base` weights (~1.4 GB) via Python `snapshot_download`
 5. Compiles the CUDA megakernel `.so` with `VOCAB=3072` — takes ~3 min, cached after
 
-> **If HuggingFace download fails** (rate limit):
-> ```bash
-> pip install huggingface_hub
-> huggingface-cli download Qwen/Qwen3-TTS-12Hz-0.6B-Base \
->     --local-dir model/tts_base --local-dir-use-symlinks False
-> ```
+> **Note on `huggingface-cli`:** `setup.sh` uses Python's `huggingface_hub.snapshot_download()` directly instead of the CLI, because `huggingface-cli` is not always on `$PATH` on fresh vast.ai instances even after `pip install`.
 
 > **If `nvcc` is not found:**
 > ```bash
