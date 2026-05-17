@@ -338,16 +338,9 @@ def _decode_audio(frames, m):
 
 # ─── main synthesis loop ──────────────────────────────────────────────────────
 
-VOICE_SEED = int(os.getenv("VOICE_SEED", "42"))   # fixed seed → consistent voice
-
 @torch.no_grad()
 async def _synthesize_streaming(text, m):
     t0 = time.perf_counter()
-
-    # Fix RNG state so every call produces the same speaker voice.
-    # The text content still varies; only the sampling randomness is locked.
-    torch.manual_seed(VOICE_SEED)
-    torch.cuda.manual_seed(VOICE_SEED)
 
     prefill_embed, attn_mask, trailing_text_hidden = _build_prefill_embed(m, text)
     seq_len = prefill_embed.shape[1]
